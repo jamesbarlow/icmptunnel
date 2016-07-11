@@ -1,0 +1,11 @@
+# Vim swap files
+src/*.swp
+
+# Object files
+src/*.o
+
+# Gzipped man pages
+man/*.gz
+
+# Executables
+icmptunnel
