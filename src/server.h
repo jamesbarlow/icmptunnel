@@ -27,9 +27,7 @@
 #ifndef ICMPTUNNEL_SERVER_H
 #define ICMPTUNNEL_SERVER_H
 
-struct options;
-
 /* run the server. */
-int server(struct options *options);
+int server(void);
 
 #endif

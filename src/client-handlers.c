@@ -24,9 +24,15 @@
  *  SOFTWARE.
  */
 
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <arpa/inet.h>
+
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "config.h"
 #include "peer.h"
 #include "daemon.h"
 #include "options.h"
@@ -36,110 +42,31 @@
 #include "forwarder.h"
 #include "client-handlers.h"
 
-void send_connection_request(struct echo_skt *skt, struct peer *server, int emulation)
+void handle_client_data(struct peer *server, int framesize)
 {
-    /* write a connection request packet. */
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(header->magic));
-    header->type = PACKET_CONNECTION_REQUEST;
+    struct echo_skt *skt = &server->skt;
+    struct tun_device *device = &server->device;
 
-    /* send the request. */
-    struct echo request;
-    request.size = sizeof(struct packet_header);
-    request.reply = 0;
-    request.id = server->nextid;
-    request.seq = emulation ? server->nextseq : server->nextseq++;
-
-    send_echo(skt, server->linkip, &request);
-}
-
-void send_punchthru(struct echo_skt *skt, struct peer *server, int emulation)
-{
-    /* write a punchthru packet. */
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(header->magic));
-    header->type = PACKET_PUNCHTHRU;
-
-    /* send the packet. */
-    struct echo request;
-    request.size = sizeof(struct packet_header);
-    request.reply = 0;
-    request.id = server->nextid;
-    request.seq = emulation ? server->nextseq : server->nextseq++;
-
-    send_echo(skt, server->linkip, &request);
-}
-
-void send_keep_alive(struct echo_skt *skt, struct peer *server, int emulation)
-{
-    /* write a keep-alive request packet. */
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(header->magic));
-    header->type = PACKET_KEEP_ALIVE;
-
-    /* send the request. */
-    struct echo request;
-    request.size = sizeof(struct packet_header);
-    request.reply = 0;
-    request.id = server->nextid;
-    request.seq = emulation ? server->nextseq : server->nextseq++;
-
-    send_echo(skt, server->linkip, &request);
-}
-
-void handle_connection_accept(struct echo_skt *skt, struct peer *server, struct options *opts)
-{
-    /* if we're already connected then ignore the packet. */
-    if (server->connected)
-        return;
-
-    fprintf(stderr, "connection established.\n");
-
-    server->connected = 1;
-    server->timeouts = 0;
-
-    /* fork and run as a daemon if needed. */
-    if (opts->daemon) {
-        if (daemon() != 0)
-            return;
-    }
-
-    /* send the initial punch-thru packets. */
-    int i;
-    for (i = 0; i < 10; ++i) {
-        send_punchthru(skt, server, opts->emulation);
-    }
-}
-
-void handle_server_full(struct peer *server)
-{
-    /* if we're already connected then ignore the packet. */
-    if (server->connected)
-        return;
-
-    fprintf(stderr, "unable to connect: server is full.\n");
-
-    /* stop the packet forwarding loop. */
-    stop();
-}
-
-void handle_client_data(struct echo_skt *skt, struct tun_device *device,
-    struct peer *server, struct echo *echo)
-{
     /* if we're not connected then drop the packet. */
     if (!server->connected)
         return;
 
     /* determine the size of the encapsulated frame. */
-    int framesize = echo->size - sizeof(struct packet_header);
-
     if (!framesize)
         return;
 
     /* write the frame to the tunnel interface. */
-    write_tun_device(device, skt->data + sizeof(struct packet_header), framesize);
+    if (write_tun_device(device, skt->buf->payload, framesize) < 0)
+        return;
 
+    server->seconds = 0;
     server->timeouts = 0;
+
+    /* send punch-thru to avoid server sequence number starvartion. */
+    if (device->iopkts + 1 >= ICMPTUNNEL_PUNCHTHRU_WINDOW / 2)
+        send_punchthru(server);
+    else
+        device->iopkts++;
 }
 
 void handle_keep_alive_response(struct peer *server)
@@ -150,4 +77,82 @@ void handle_keep_alive_response(struct peer *server)
 
     server->seconds = 0;
     server->timeouts = 0;
+}
+
+void handle_connection_accept(struct peer *server)
+{
+    struct packet_header *pkth = &server->skt.buf->pkth;
+    char ip[sizeof("255.255.255.255")];
+
+    /* if we're already connected then ignore the packet. */
+    if (server->connected)
+        return;
+
+    inet_ntop(AF_INET, &server->linkip, ip, sizeof(ip));
+
+    if (pkth->flags & PACKET_F_ICMP_SEQ_EMULATION) {
+        opts.emulation = 1;
+    } else if (opts.emulation > 1) {
+        fprintf(stderr, "turn off microsoft ping emulation mode for %s.\n", ip);
+        opts.emulation = 0;
+    } else {
+        opts.emulation = 0;
+    }
+
+    fprintf(stderr, "connection established with %s.\n", ip);
+
+    server->connected = 1;
+    server->seconds = 0;
+    server->timeouts = 0;
+
+    /* fork and run as a daemon if needed. */
+    if (opts.daemon) {
+        if (daemon() != 0)
+            return;
+    }
+
+    /* send the initial punch-thru packets. */
+    send_punchthru(server);
+}
+
+void handle_server_full(struct peer *server)
+{
+    /* if we're already connected then ignore the packet. */
+    if (server->connected)
+        return;
+
+    fprintf(stderr, "unable to connect: server is full, retrying.\n");
+}
+
+int send_message(struct peer *server, int pkttype, int flags, int size)
+{
+    struct echo_skt *skt = &server->skt;
+
+    if (!opts.emulation)
+        server->nextseq = htons(ntohs(server->nextseq) + 1);
+
+    /* write a connection request packet. */
+    struct packet_header *pkth = &skt->buf->pkth;
+    memcpy(pkth->magic, PACKET_MAGIC_CLIENT, sizeof(pkth->magic));
+    pkth->flags = flags;
+    pkth->type = pkttype;
+
+    /* send packet. */
+    struct icmphdr *icmph = &skt->buf->icmph;
+    icmph->un.echo.id = server->nextid;
+    icmph->un.echo.sequence = server->nextseq;
+
+    return send_echo(skt, server->linkip, size);
+}
+
+void send_connection_request(struct peer *server)
+{
+    unsigned int flags = opts.emulation ? PACKET_F_ICMP_SEQ_EMULATION : 0;
+
+    /* do not touch nextseq until connection established. */
+    opts.emulation++;
+
+    fprintf(stderr, "trying to connect using id %d ...\n",
+            htons(server->nextid));
+    send_message(server, PACKET_CONNECTION_REQUEST, flags, 0);
 }

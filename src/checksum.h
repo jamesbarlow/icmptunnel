@@ -30,6 +30,6 @@
 #include <stdint.h>
 
 /* calculate an icmp checksum. */
-uint16_t checksum(const char *buf, int size);
+uint16_t checksum(const void *buf, int size);
 
 #endif

@@ -24,16 +24,43 @@
  *  SOFTWARE.
  */
 
-#ifndef ICMPTUNNEL_FORWARDER_H
-#define ICMPTUNNEL_FORWARDER_H
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
+#include <unistd.h>
 
-struct peer;
-struct handlers;
+int drop_privs(const char *user)
+{
+    /* hope it is found in libc, not in POSIX. */
+    extern int setgroups(size_t n, const gid_t *list);
 
-/* loop and forward packets between the tunnel interface and peer. */
-int forward(struct peer *peer, const struct handlers *handlers);
+    struct passwd *pw;
+    struct group *gr;
 
-/* stop the forwarding loop. */
-void stop();
+    if (!user || !*user)
+        return 0;
 
-#endif
+    /* user */
+    pw = getpwnam(user);
+    if (!pw)
+        return -1;
+
+    /* group */
+    gr = getgrgid(pw->pw_gid);
+    if (!gr)
+        return -1;
+
+    /* main group */
+    if (setgid(pw->pw_gid) < 0)
+        return -1;
+
+    /* supplementary group */
+    if (setgroups(1, &pw->pw_gid) < 0)
+        return -1;
+
+    /* user */
+    if (setuid(pw->pw_uid) < 0)
+        return -1;
+
+    return 0;
+}

@@ -27,9 +27,7 @@
 #ifndef ICMPTUNNEL_CLIENT_H
 #define ICMPTUNNEL_CLIENT_H
 
-struct options;
-
 /* run the client. */
-int client(const char *hostname, struct options *options);
+int client(const char *hostname);
 
 #endif

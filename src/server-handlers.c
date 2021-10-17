@@ -24,101 +24,148 @@
  *  SOFTWARE.
  */
 
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <arpa/inet.h>
+
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "peer.h"
+#include "options.h"
 #include "echo-skt.h"
 #include "tun-device.h"
 #include "protocol.h"
 #include "server-handlers.h"
 
-void handle_connection_request(struct echo_skt *skt, struct peer *client,
-    struct echo *request, uint32_t sourceip)
+static void opts_emulation(const struct peer *client)
 {
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(struct packet_header));
+    uint16_t sequence = client->skt.buf->icmph.un.echo.sequence;
+    char ip[sizeof("255.255.255.255")];
 
-    /* is a client already connected? */
-    if (client->connected) {
-        header->type = PACKET_SERVER_FULL;
-    }
-    else {
-        header->type = PACKET_CONNECTION_ACCEPT;
-
-        client->connected = 1;
-        client->seconds = 0;
-        client->timeouts = 0;
-        client->nextpunchthru = 0;
-        client->nextpunchthru_write = 0;
-        client->linkip = sourceip;
-    }
-
-    /* send the response. */
-    struct echo response;
-    response.size = sizeof(struct packet_header);
-    response.reply = 1;
-    response.id = request->id;
-    response.seq = request->seq;
-
-    send_echo(skt, sourceip, &response);
-}
-
-/* handle a punch-thru packet. */
-void handle_punchthru(struct peer *client, struct echo *request, uint32_t sourceip)
-{
-    if (!client->connected || sourceip != client->linkip)
+    if (opts.emulation != 1)
         return;
 
-    /* store the sequence number. */
-    client->punchthru[client->nextpunchthru_write] = request->seq;
-    client->nextpunchthru_write++;
-    client->nextpunchthru_write %= ICMPTUNNEL_PUNCHTHRU_WINDOW;
+    /* first data, keepalive or punchthru (client shouldn't send it) received
+     * with unchanged sequence number meaning that client accepted emulation
+     * option proposal in connection request: make option immutable.
+     */
+    opts.emulation = 2;
+
+    if (client->nextseq == sequence)
+        return;
+
+    inet_ntop(AF_INET, &client->linkip, ip, sizeof(ip));
+    fprintf(stderr, "turn off microsoft ping emulation mode for %s.\n", ip);
+
+    opts.emulation = 0;
+}
+
+void handle_server_data(struct peer *client, int framesize)
+{
+    struct echo_skt *skt = &client->skt;
+    struct tun_device *device = &client->device;
+
+    /* determine the size of the encapsulated frame. */
+    if (!framesize)
+        return;
+
+    /* write the frame to the tunnel interface. */
+    write_tun_device(device, skt->buf->payload, framesize);
+
+    /* save the icmp id and sequence numbers for any return traffic. */
+    handle_punchthru(client);
+}
+
+void handle_keep_alive_request(struct peer *client)
+{
+    struct echo_skt *skt = &client->skt;
+
+    /* write a keep-alive response. */
+    struct packet_header *pkth = &skt->buf->pkth;
+    memcpy(pkth->magic, PACKET_MAGIC_SERVER, sizeof(pkth->magic));
+    pkth->flags = 0;
+    pkth->type = PACKET_KEEP_ALIVE;
+
+    /* send the response to the client. */
+    send_echo(skt, client->linkip, 0);
+
+    opts_emulation(client);
 
     client->seconds = 0;
     client->timeouts = 0;
 }
 
-void handle_keep_alive_request(struct echo_skt *skt, struct peer *client, struct echo *request,
-    uint32_t sourceip)
+void handle_connection_request(struct peer *client)
 {
-    if (!client->connected || sourceip != client->linkip)
+    struct echo_skt *skt = &client->skt;
+    uint32_t sourceip = skt->buf->iph.saddr;
+    uint32_t id = skt->buf->icmph.un.echo.id;
+    char *verdict, ip[sizeof("255.255.255.255")];
+
+    struct packet_header *pkth = &skt->buf->pkth;
+    memcpy(pkth->magic, PACKET_MAGIC_SERVER, sizeof(pkth->magic));
+    pkth->flags = 0;
+
+    inet_ntop(AF_INET, &sourceip, ip, sizeof(ip));
+
+    /* is a client already connected? */
+    if (client->linkip && client->linkip != sourceip) {
+        pkth->type = PACKET_SERVER_FULL;
+        verdict = "ignoring";
+    } else {
+        pkth->type = PACKET_CONNECTION_ACCEPT;
+        verdict = "accepting";
+
+        if (pkth->flags & PACKET_F_ICMP_SEQ_EMULATION) {
+            /* client requested: cannot be turned off. */
+            opts.emulation = 2;
+        } else if (opts.emulation) {
+            /* server requested via command line option: can be turned off. */
+            fprintf(stderr, "request microsoft ping emulation on %s.\n", ip);
+        }
+
+        if (opts.emulation)
+            pkth->flags |= PACKET_F_ICMP_SEQ_EMULATION;
+
+        /* store the id number. */
+        if (!client->strict_nextid)
+            client->nextid = id;
+
+        client->seconds = 0;
+        client->timeouts = 0;
+
+        /* better to start with used sequence number until punchthru. */
+        client->nextseq = skt->buf->icmph.un.echo.sequence;
+        client->punchthru_idx = 0;
+        client->punchthru_write_idx = 0;
+        client->linkip = sourceip;
+    }
+
+    fprintf(stderr, "%s connection from %s with id %d\n",
+            verdict, ip, ntohs(id));
+
+    /* do not respond to non-client IPs to hide from probes. */
+    if (client->strict_nextid && client->linkip != sourceip)
         return;
 
-    /* write a keep-alive response. */
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(header->magic));
-    header->type = PACKET_KEEP_ALIVE;
-
-    /* send the response to the client. */
-    struct echo response;
-    response.size = sizeof(struct packet_header);
-    response.reply = 1;
-    response.id = request->id;
-    response.seq = request->seq;
-
-    send_echo(skt, sourceip, &response);
-
-    client->timeouts = 0;
+    /* send the response. */
+    send_echo(skt, sourceip, 0);
 }
 
-void handle_server_data(struct echo_skt *skt, struct tun_device *device, struct peer *client,
-    struct echo *request, uint32_t sourceip)
+/* handle a punch-thru packet. */
+void handle_punchthru(struct peer *client)
 {
-    if (!client->connected || sourceip != client->linkip)
-        return;
+    opts_emulation(client);
 
-    /* determine the size of the encapsulated frame. */
-    int framesize = request->size - sizeof(struct packet_header);
+    if (!opts.emulation) {
+        /* store the sequence number. */
+        client->punchthru[client->punchthru_write_idx++] =
+            client->skt.buf->icmph.un.echo.sequence;
+        client->punchthru_write_idx %= ICMPTUNNEL_PUNCHTHRU_WINDOW;
+    }
 
-    if (!framesize)
-        return;
-
-    /* write the frame to the tunnel interface. */
-    write_tun_device(device, skt->data + sizeof(struct packet_header), framesize);
-
-    /* save the icmp id and sequence numbers for any return traffic. */
-    client->nextid = request->id;
-    client->nextseq = request->seq;
     client->seconds = 0;
     client->timeouts = 0;
 }

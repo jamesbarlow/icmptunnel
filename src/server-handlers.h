@@ -28,22 +28,17 @@
 #define ICMPTUNNEL_SERVER_HANDLERS_H
 
 struct peer;
-struct echo;
-struct echo_skt;
-
-/* handle a connection request packet. */
-void handle_connection_request(struct echo_skt *skt, struct peer *client, struct echo *request,
-    uint32_t sourceip);
-
-/* handle a punch-thru packet. */
-void handle_punchthru(struct peer *client, struct echo *request, uint32_t sourceip);
-
-/* handle a keep-alive request packet. */
-void handle_keep_alive_request(struct echo_skt *skt, struct peer *client, struct echo *request,
-    uint32_t sourceip);
 
 /* handle a data packet. */
-void handle_server_data(struct echo_skt *skt, struct tun_device *devuce, struct peer *client,
-    struct echo *request, uint32_t sourceip);
+void handle_server_data(struct peer *client, int framesize);
+
+/* handle a keep-alive request packet. */
+void handle_keep_alive_request(struct peer *client);
+
+/* handle a connection request packet. */
+void handle_connection_request(struct peer *client);
+
+/* handle a punch-thru packet. */
+void handle_punchthru(struct peer *client);
 
 #endif

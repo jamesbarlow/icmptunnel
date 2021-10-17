@@ -27,32 +27,41 @@
 #ifndef ICMPTUNNEL_ECHOSKT_H
 #define ICMPTUNNEL_ECHOSKT_H
 
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+
 #include <stdint.h>
-#include <stdlib.h>
+
+#include "protocol.h"
+
+struct echo_buf
+{
+    struct iphdr iph;
+    struct icmphdr icmph;
+    struct packet_header pkth;
+    uint8_t payload[];
+} __attribute__((packed));
 
 struct echo_skt
 {
     int fd;
-    int bufsize;
-    char *buf, *data;
-};
 
-struct echo
-{
-    int size;
-    int reply;
-    uint16_t id;
-    uint16_t seq;
+    unsigned int ttl:8;
+    unsigned int client:1;
+    unsigned int filter:1;
+
+    unsigned int bufsize:16;
+    struct echo_buf *buf;
 };
 
 /* open an icmp echo socket. */
-int open_echo_skt(struct echo_skt *skt, int mtu);
+int open_echo_skt(struct echo_skt *skt, int mtu, int ttl, int client);
 
 /* send an echo packet. */
-int send_echo(struct echo_skt *skt, uint32_t destip, struct echo *echo);
+int send_echo(struct echo_skt *skt, uint32_t targetip, int size);
 
 /* receive an echo packet. */
-int receive_echo(struct echo_skt *skt, uint32_t *sourceip, struct echo *echo);
+int receive_echo(struct echo_skt *skt);
 
 /* close the socket. */
 void close_echo_skt(struct echo_skt *skt);

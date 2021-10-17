@@ -28,7 +28,10 @@
 #define ICMPTUNNEL_CONFIG_H
 
 /* program version. */
-#define ICMPTUNNEL_VERSION "0.1-beta"
+#define ICMPTUNNEL_VERSION "0.2-beta"
+
+/* unprivileged user to switch to. */
+#define ICMPTUNNEL_USER "nobody"
 
 /* default timeout in seconds between keep-alive requests. */
 #define ICMPTUNNEL_TIMEOUT 5
@@ -40,10 +43,7 @@
 #define ICMPTUNNEL_PUNCHTHRU_INTERVAL 1
 
 /* default window size of punch-thru packets. */
-#define ICMPTUNNEL_PUNCHTHRU_WINDOW 10
-
-/* default tunnel mtu in bytes; assume the size of an ethernet frame. */
-#define ICMPTUNNEL_MTU 1500
+#define ICMPTUNNEL_PUNCHTHRU_WINDOW 8
 
 /* default to standard linux behaviour, do not emulate windows ping. */
 #define ICMPTUNNEL_EMULATION 0

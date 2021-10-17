@@ -27,31 +27,39 @@
 #ifndef ICMPTUNNEL_CLIENT_HANDLERS_H
 #define ICMPTUNNEL_CLIENT_HANDLERS_H
 
+#include "options.h"
+
 struct peer;
-struct options;
-struct echo_skt;
-struct tun_device;
 
-/* send a connection request to the server. */
-void send_connection_request(struct echo_skt *skt, struct peer *server, int emulation);
+/* handle a data packet. */
+void handle_client_data(struct peer *server, int framesize);
 
-/* send a punchthru packet. */
-void send_punchthru(struct echo_skt *skt, struct peer *server, int emulation);
-
-/* send a keep-alive request to the server. */
-void send_keep_alive(struct echo_skt *skt, struct peer *server, int emulation);
+/* handle a keep-alive packet. */
+void handle_keep_alive_response(struct peer *server);
 
 /* handle a connection accept packet. */
-void handle_connection_accept(struct echo_skt *skt, struct peer *server, struct options *opts);
+void handle_connection_accept(struct peer *server);
 
 /* handle a server full packet. */
 void handle_server_full(struct peer *server);
 
-/* handle a data packet. */
-void handle_client_data(struct echo_skt *skt, struct tun_device *device, struct peer *server,
-    struct echo *echo);
+/* send a message to the server. */
+int send_message(struct peer *server, int pkttype, int flags, int size);
 
-/* handle a keep-alive packet. */
-void handle_keep_alive_response(struct peer *server);
+/* send a connection request to the server. */
+void send_connection_request(struct peer *server);
+
+/* send a punchthru packet. */
+static inline void send_punchthru(struct peer *server)
+{
+    if (!opts.emulation)
+        send_message(server, PACKET_PUNCHTHRU, 0, 0);
+}
+
+/* send a keep-alive request to the server. */
+static inline void send_keep_alive(struct peer *server)
+{
+    send_message(server, PACKET_KEEP_ALIVE, 0, 0);
+}
 
 #endif

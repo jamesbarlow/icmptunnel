@@ -27,19 +27,18 @@
 #ifndef ICMPTUNNEL_HANDLERS_H
 #define ICMPTUNNEL_HANDLERS_H
 
-struct echo_skt;
-struct tun_device;
+struct peer;
 
 struct handlers
 {
     /* handle an icmp packet. */
-    void (*icmp)(struct echo_skt *skt, struct tun_device *device);
+    void (*icmp)(struct peer *peer);
 
     /* handle data from the tunnel interface. */
-    void (*tunnel)(struct echo_skt *skt, struct tun_device *device);
+    void (*tunnel)(struct peer *peer);
 
     /* handle a timeout. */
-    void (*timeout)(struct echo_skt *skt);
+    void (*timeout)(struct peer *peer);
 };
 
 #endif

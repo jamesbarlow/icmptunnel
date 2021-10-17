@@ -1,0 +1,19 @@
+[Unit]
+Description=icmptunnel is a tool to tunnel IP traffic within ICMP echo request and response (ping) packets
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/serhepopovych/icmptunnel/blob/next/README.md
+
+[Service]
+PrivateTmp=true
+EnvironmentFile=/usr/local/etc/icmptunnel/client/%i.conf
+ExecStart=/usr/local/sbin/icmptunnel $OPTIONS $SERVER -r infinity -i %i
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/net/tun rw
+ProtectSystem=true
+ProtectHome=true
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

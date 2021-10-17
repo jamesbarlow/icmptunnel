@@ -29,20 +29,31 @@
 
 struct options
 {
-    /* interval between keep-alive packets. */
-    int keepalive;
+    /* unprivileged user to switch to. */
+    const char *user;
+
+    /* number of poll intervals between keep-alive packets. */
+    unsigned int keepalive;
 
     /* number of retries before timing out. */
-    int retries;
+    unsigned int retries;
 
     /* tunnel mtu. */
-    int mtu;
+    unsigned int mtu;
 
     /* enable windows ping emulation. */
-    int emulation;
+    unsigned int emulation;
 
     /* run as a daemon. */
-    int daemon;
+    unsigned int daemon;
+
+    /* hops between client and server. */
+    unsigned int ttl;
+
+    /* ICMP Echo Id field for multi-instance. */
+    unsigned int id;
 };
+
+extern struct options opts;
 
 #endif

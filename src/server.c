@@ -24,6 +24,7 @@
  *  SOFTWARE.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -32,6 +33,7 @@
 #include "options.h"
 #include "server.h"
 #include "peer.h"
+#include "privs.h"
 #include "protocol.h"
 #include "echo-skt.h"
 #include "tun-device.h"
@@ -39,153 +41,162 @@
 #include "forwarder.h"
 #include "server-handlers.h"
 
-/* the client. */
-static struct peer client;
-
-/* program options. */
-static struct options *opts;
-
-/* handle an icmp packet. */
-static void handle_icmp_packet(struct echo_skt *skt, struct tun_device *device);
-
-/* handle data from the tunnel interface. */
-static void handle_tunnel_data(struct echo_skt *skt, struct tun_device *device);
-
-/* handle a timeout. */
-static void handle_timeout(struct echo_skt *skt);
-
-int server(struct options *options)
+static void handle_icmp_packet(struct peer *client)
 {
-    struct echo_skt skt;
-    struct tun_device device;
-
-    struct handlers handlers = {
-        &handle_icmp_packet,
-        &handle_tunnel_data,
-        &handle_timeout
-    };
-    opts = options;
-
-    /* calculate the required icmp payload size. */
-    int bufsize = options->mtu + sizeof(struct packet_header);
-
-    /* open an echo socket. */
-    if (open_echo_skt(&skt, bufsize) != 0)
-        return 1;
-
-    /* open a tunnel interface. */
-    if (open_tun_device(&device, options->mtu) != 0)
-        return 1;
-
-    /* fork and run as a daemon if needed. */
-    if (options->daemon) {
-        if (daemon() != 0)
-            return 1;
-    }
-
-    /* run the packet forwarding loop. */
-    int ret = forward(&skt, &device, &handlers);
-
-    close_tun_device(&device);
-    close_echo_skt(&skt);
-
-    return ret;
-}
-
-void handle_icmp_packet(struct echo_skt *skt, struct tun_device *device)
-{
-    struct echo echo;
-    uint32_t sourceip;
+    struct echo_skt *skt = &client->skt;
+    int size;
 
     /* receive the packet. */
-    if (receive_echo(skt, &sourceip, &echo) != 0)
-        return;
-
-    /* we're only expecting echo requests. */
-    if (echo.reply)
-        return;
-
-    /* check the packet size. */
-    if (echo.size < (int)sizeof(struct packet_header))
+    if ((size = receive_echo(skt)) < 0)
         return;
 
     /* check the header magic. */
-    struct packet_header *header = (struct packet_header*)skt->data;
+    const struct packet_header *pkth = &skt->buf->pkth;
 
-    if (memcmp(header->magic, PACKET_MAGIC, sizeof(header->magic)) != 0)
+    if (memcmp(pkth->magic, PACKET_MAGIC_CLIENT, sizeof(pkth->magic)))
         return;
 
-    switch (header->type) {
-    case PACKET_CONNECTION_REQUEST:
+    if (pkth->type == PACKET_CONNECTION_REQUEST) {
+        /* we're only expecting packets with specified id. */
+        if (client->strict_nextid &&
+            client->nextid != skt->buf->icmph.un.echo.id)
+            return;
+
         /* handle a connection request packet. */
-        handle_connection_request(skt, &client, &echo, sourceip);
-        break;
+        handle_connection_request(client);
+    } else {
+        /* we're only expecting packets from the client ... */
+        if (!client->linkip || skt->buf->iph.saddr != client->linkip)
+            return;
 
-    case PACKET_DATA:
-        /* handle a data packet. */
-        handle_server_data(skt, device, &client, &echo, sourceip);
-        break;
+        /* ... and with id used during connection request. */
+        if (client->nextid != skt->buf->icmph.un.echo.id)
+            return;
 
-    case PACKET_PUNCHTHRU:
-        /* handle a punch-thru packet. */
-        handle_punchthru(&client, &echo, sourceip);
-        break;
+        switch (pkth->type) {
+        case PACKET_DATA:
+            /* handle a data packet. */
+            handle_server_data(client, size);
+            break;
 
-    case PACKET_KEEP_ALIVE:
-        /* handle a keep-alive request packet. */
-        handle_keep_alive_request(skt, &client, &echo, sourceip);
-        break;
+        case PACKET_KEEP_ALIVE:
+            /* handle a keep-alive request packet. */
+            handle_keep_alive_request(client);
+            break;
+
+        case PACKET_PUNCHTHRU:
+            /* handle a punch-thru packet. */
+            handle_punchthru(client);
+            break;
+        }
     }
 }
 
-void handle_tunnel_data(struct echo_skt *skt, struct tun_device *device)
+static void handle_tunnel_data(struct peer *client)
 {
-    int size;
+    struct echo_skt *skt = &client->skt;
+    struct tun_device *device = &client->device;
+    int framesize;
 
     /* read the frame. */
-    if (read_tun_device(device, skt->data + sizeof(struct packet_header), &size) != 0)
+    if ((framesize = read_tun_device(device, skt->buf->payload)) <= 0)
         return;
 
     /* if no client is connected then drop the frame. */
-    if (!client.connected)
+    if (!client->linkip)
         return;
 
     /* write a data packet. */
-    struct packet_header *header = (struct packet_header*)skt->data;
-    memcpy(header->magic, PACKET_MAGIC, sizeof(header->magic));
-    header->type = PACKET_DATA;
+    struct packet_header *pkth = &skt->buf->pkth;
+    memcpy(pkth->magic, PACKET_MAGIC_SERVER, sizeof(pkth->magic));
+    pkth->flags = 0;
+    pkth->type = PACKET_DATA;
 
     /* send the encapsulated frame to the client. */
-    struct echo echo;
-    echo.size = sizeof(struct packet_header) + size;
-    echo.reply = 1;
-    echo.id = client.nextid;
-    echo.seq = client.punchthru[client.nextpunchthru];
+    struct icmphdr *icmph = &skt->buf->icmph;
+    icmph->un.echo.id = client->nextid;
+    if (opts.emulation) {
+        icmph->un.echo.sequence = client->nextseq;
+    } else {
+        icmph->un.echo.sequence = client->punchthru[client->punchthru_idx++];
+        client->punchthru_idx %= ICMPTUNNEL_PUNCHTHRU_WINDOW;
+    }
 
-    client.nextpunchthru++;
-    client.nextpunchthru %= ICMPTUNNEL_PUNCHTHRU_WINDOW;
-
-    send_echo(skt, client.linkip, &echo);
+    send_echo(skt, client->linkip, framesize);
 }
 
-void handle_timeout(struct echo_skt *skt)
+static void handle_timeout(struct peer *client)
 {
-    /* unused parameter. */
-    (void)skt;
-
-    if (!client.connected)
+    if (!client->linkip)
         return;
 
     /* has the peer timeout elapsed? */
-    if (++client.seconds == opts->keepalive) {
-        client.seconds = 0;
+    if (++client->seconds == opts.keepalive) {
+        client->seconds = 0;
 
         /* have we reached the max number of retries? */
-        if (opts->retries != -1 && ++client.timeouts == opts->retries) {
+        if (opts.retries && ++client->timeouts == opts.retries) {
             fprintf(stderr, "client connection timed out.\n");
 
-            client.connected = 0;
+            client->linkip = 0;
             return;
         }
     }
+}
+
+static const struct handlers handlers = {
+    handle_icmp_packet,
+    handle_tunnel_data,
+    handle_timeout,
+};
+
+int server(void)
+{
+    struct peer client;
+    struct echo_skt *skt = &client.skt;
+    struct tun_device *device = &client.device;
+    int ret = 1;
+
+    /* open an echo socket. */
+    if (open_echo_skt(skt, opts.mtu, opts.ttl, 0) < 0)
+        goto err_out;
+
+    /* open a tunnel interface. */
+    if (open_tun_device(device, opts.mtu) < 0)
+        goto err_close_skt;
+
+    /* drop privileges. */
+    if (drop_privs(opts.user) < 0)
+        goto err_close_tun;
+
+    /* fork and run as a daemon if needed. */
+    if (opts.daemon) {
+        if (daemon() != 0)
+            goto err_close_tun;
+    }
+
+    /* mark as not connected with client. */
+    client.linkip = 0;
+
+    /* accept packets only for given instance. */
+    if (opts.id > UINT16_MAX) {
+        client.strict_nextid = 0;
+    } else {
+        client.strict_nextid = 1;
+        client.nextid = htons(opts.id);
+    }
+
+    /* initialize keepalive seconds and timeout retries. */
+    client.seconds = 0;
+    client.timeouts = 0;
+
+    /* run the packet forwarding loop. */
+    ret = forward(&client, &handlers) < 0;
+
+err_close_tun:
+    close_tun_device(device);
+err_close_skt:
+    close_echo_skt(skt);
+err_out:
+    return ret;
 }

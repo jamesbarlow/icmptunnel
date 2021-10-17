@@ -29,26 +29,51 @@
 
 #include <stdint.h>
 #include "config.h"
+#include "echo-skt.h"
+#include "tun-device.h"
 
 struct peer
 {
-    int connected;
+    struct echo_skt skt;
+    struct tun_device device;
 
     /* link address. */
     uint32_t linkip;
 
-    /* next icmp id and sequence numbers. */
+    /* next icmp id. */
     uint16_t nextid;
-    uint16_t nextseq;
 
-    /* punch-thru sequence numbers. */
-    uint16_t punchthru[ICMPTUNNEL_PUNCHTHRU_WINDOW];
-    uint16_t nextpunchthru;
-    uint16_t nextpunchthru_write;
+    union {
+        struct {
+            uint16_t connected;
+#define connected u1.c.connected
+        } c;
+        struct {
+            uint16_t strict_nextid;
+#define strict_nextid u1.s.strict_nextid
+        } s;
+    } u1;
+
+    union {
+        struct {
+            /* client or server in emulation mode sequence numbers. */
+            uint16_t nextseq;
+#define nextseq u2.c.nextseq
+        } c;
+        struct {
+            /* punch-thru sequence numbers. */
+            uint16_t punchthru[ICMPTUNNEL_PUNCHTHRU_WINDOW];
+            uint16_t punchthru_idx;
+            uint16_t punchthru_write_idx;
+#define punchthru_idx u2.s.punchthru_idx
+#define punchthru_write_idx u2.s.punchthru_write_idx
+#define punchthru u2.s.punchthru
+        } s;
+    } u2;
 
     /* number of timeout intervals since last activity. */
-    int seconds;
-    int timeouts;
+    unsigned int seconds;
+    unsigned int timeouts;
 };
 
 #endif

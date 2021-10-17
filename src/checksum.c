@@ -26,7 +26,7 @@
 
 #include "checksum.h"
 
-uint16_t checksum(const char *buf, int size)
+uint16_t checksum(const void *buf, int size)
 {
     uint16_t *p = (uint16_t*)buf;
     uint32_t sum = 0;

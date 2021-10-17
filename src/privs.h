@@ -24,16 +24,9 @@
  *  SOFTWARE.
  */
 
-#ifndef ICMPTUNNEL_FORWARDER_H
-#define ICMPTUNNEL_FORWARDER_H
+#ifndef ICMPTUNNEL_PRIVS_H
+#define ICMPTUNNEL_PRIVS_H
 
-struct peer;
-struct handlers;
-
-/* loop and forward packets between the tunnel interface and peer. */
-int forward(struct peer *peer, const struct handlers *handlers);
-
-/* stop the forwarding loop. */
-void stop();
+int drop_privs(const char *user);
 
 #endif

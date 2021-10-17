@@ -30,21 +30,32 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#ifndef IF_NAMESIZE
+#ifdef IFNAMSIZ
+#define IF_NAMESIZE IFNAMSIZ
+#else
+#define IF_NAMESIZE 16
+#endif
+#endif
+
 struct tun_device
 {
     int fd;
-    int mtu;
-    char name[20];
+
+    unsigned int mtu:16;
+    unsigned int iopkts:8;
+
+    char name[IF_NAMESIZE];
 };
 
 /* open a virtual tunnel device. */
 int open_tun_device(struct tun_device *device, int mtu);
 
 /* write to the device. */
-int write_tun_device(struct tun_device *device, const char *buf, int size);
+int write_tun_device(struct tun_device *device, const void *buf, int size);
 
 /* read from the device. */
-int read_tun_device(struct tun_device *device, char *buf, int *size);
+int read_tun_device(struct tun_device *device, void *buf);
 
 /* close the device. */
 void close_tun_device(struct tun_device *device);

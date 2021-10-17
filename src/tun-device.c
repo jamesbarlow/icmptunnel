@@ -44,7 +44,7 @@ int open_tun_device(struct tun_device *device, int mtu)
     if ((device->fd = open(clonedev, O_RDWR)) < 0) {
         fprintf(stderr, "unable to open %s: %s\n", clonedev, strerror(errno));
         fprintf(stderr, "is the tun kernel module loaded?\n");
-        return 1;
+        return -1;
     }
 
     memset(&ifr, 0, sizeof(ifr));
@@ -53,38 +53,58 @@ int open_tun_device(struct tun_device *device, int mtu)
     /* try to create the device, the kernel will choose a name. */
     if (ioctl(device->fd, TUNSETIFF, &ifr) < 0) {
         fprintf(stderr, "unable to create a tunnel device: %s\n", strerror(errno));
-        return 1;
+        return -1;
     }
 
     /* copy out the device name and mtu. */
     strncpy(device->name, ifr.ifr_name, sizeof(device->name));
+    device->name[sizeof(device->name) - 1] = '\0';
     device->mtu = mtu;
 
-    fprintf(stderr, "opened tunnel device: %s\n", ifr.ifr_name);
+    /* set mtu on tunnel interface. */
+    if (1) {
+        int sk = socket(AF_INET, SOCK_STREAM, 0);
+
+        ifr.ifr_mtu = mtu;
+        if (sk < 0 || ioctl(sk, SIOCSIFMTU, &ifr) < 0) {
+            fprintf(stderr, "unable to set tunnel device %s mtu to %u: %s\n",
+                    device->name, mtu, strerror(errno));
+            return -1;
+        }
+
+        close(sk);
+    }
+
+    /* initialize packet io statistics. */
+    device->iopkts = 0;
+
+    fprintf(stderr, "opened tunnel device: %s, mtu: %u\n", device->name, mtu);
 
     return 0;
 }
 
-int write_tun_device(struct tun_device *device, const char *buf, int size)
+int write_tun_device(struct tun_device *device, const void *buf, int size)
 {
     /* write to the tunnel device. */
     if (write(device->fd, buf, size) != size) {
         fprintf(stderr, "unable to write to tunnel device: %s\n", strerror(errno));
-        return 1;
+        return -1;
     }
 
-    return 0;
+    return size;
 }
 
-int read_tun_device(struct tun_device *device, char *buf, int *size)
+int read_tun_device(struct tun_device *device, void *buf)
 {
+    int size;
+
     /* read from the tunnel device. */
-    if ((*size = read(device->fd, buf, device->mtu)) < 0) {
+    if ((size = read(device->fd, buf, device->mtu)) < 0) {
         fprintf(stderr, "unable to read from tunnel device: %s\n", strerror(errno));
-        return 1;
+        return -1;
     }
 
-    return 0;
+    return size;
 }
 
 void close_tun_device(struct tun_device *device)

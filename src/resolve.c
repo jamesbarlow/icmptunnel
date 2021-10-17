@@ -33,7 +33,7 @@
 int resolve(const char *hostname, uint32_t *address)
 {
     /* try to interpret the hostname as an ip address. */
-    *address = ntohl(inet_addr(hostname));
+    *address = inet_addr(hostname);
 
     /* if we don't have an ip address, look up the name in dns. */
     if (*address == INADDR_NONE) {
@@ -41,10 +41,10 @@ int resolve(const char *hostname, uint32_t *address)
 
         if (!h) {
             fprintf(stderr, "unable to resolve: %s\n", hostname);
-            return 1;
+            return -1;
         }
 
-        *address = ntohl(*(uint32_t*)h->h_addr_list[0]);
+        *address = *((uint32_t *)h->h_addr_list[0]);
     }
 
     return 0;
