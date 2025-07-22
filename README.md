@@ -1,79 +1,55 @@
 
-## Project Structure
+**icmptunnel** is a tool to tunnel IP traffic within ICMP echo request and response (ping) packets. It’s intended for bypassing firewalls in a semi-covert way, for example when pivoting inside a network where ping is allowed. It might also be useful for egress from a corporate network to the Internet, although it is quite common for ICMP echo traffic to be filtered at the network perimeter.
 
-The codebase is organized into several modules:
+While there are a couple of existing tools which implement this technique, icmptunnel provides a more reliable protocol and a mechanism for tunneling through stateful firewalls and NAT.
 
-- **engine/** - Core trading logic including copy trading, selling strategies, and transaction parsing
-- **dex/** - Protocol-specific implementations for PumpFun and PumpSwap
-- **services/** - External services integration including Telegram notifications
-- **common/** - Shared utilities, configuration, and constants
-- **core/** - Core system functionality
-- **error/** - Error handling and definitions
+##### Compiling:
 
-## Setup
+The tool uses a plain Makefile to compile and install.
 
-### Environment Variables
+Use `make` to compile icmptunnel.
 
-To run this bot, you will need to configure the following environment variables:
+##### Quickstart:
 
-#### Required Variables
+First, disable ICMP echo responses on both the client and server. This prevents the kernel from responding to ping packets itself.
 
-- `GRPC_ENDPOINT` - Your Yellowstone gRPC endpoint URL
-- `GRPC_X_TOKEN` - Your Yellowstone authentication token
-- `` - Wallet address(es) to monitor for trades (comma-separated for multiple addresses)
+    # echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_all
 
-#### Telegram Notifications
+On the server-side, start icmptunnel in server mode, and assign an IP address to the new tunnel interface.
 
-To enable Telegram notifications:
+    # ./icmptunnel –s
+    opened tunnel device: tun0
+    (ctrl-z)
+    # bg
+    # /sbin/ifconfig tun0 10.0.0.1 netmask 255.255.255.0
 
-- `TELEGRAM_BOT_TOKEN` - Your Telegram bot token
-- `TELEGRAM_CHAT_ID` - Your chat ID for receiving notifications
+On the client-side, point icmptunnel at the server, and assign an IP address.
 
-#### Optional Variables
+    # ./icmptunnel <server>
+    opened tunnel device: tun0
+    connection established.
+    (ctrl-z)
+    # bg
+    # /sbin/ifconfig tun0 10.0.0.2 netmask 255.255.255.0
 
-- `PROTOCOL_PREFERENCE` - Preferred protocol to use (`pumpfun`, `pumpswap`, or `auto` for automatic detection)
-- `COUNTER_LIMIT` - Maximum number of trades to execute
+At this point, you should have a functioning point-to-point tunnel via ICMP packets. The server side is 10.0.0.1, and the client-side is 10.0.0.2. On the client, try connecting to the server via SSH:
 
-## New Token Tracking System
+    # ssh root@10.0.0.1
+    Password:
 
-The bot now includes a comprehensive token tracking system that:
+To use the remote server as an encrypted SOCKS proxy:
 
-1. **Tracks Bought Tokens**: When the bot successfully buys a token, it's added to a tracking system
-2. **Prevents Invalid Sells**: The bot will only attempt to sell tokens it actually owns
-3. **Monitors Balances**: A background service checks token balances every 30 seconds
-4. **Auto-Cleanup**: Tokens with zero or very low balances are automatically removed from tracking
+    # ssh -D 8080 -N root@10.0.0.1
+    Password:
 
-### Commands
+Now point your web browser at the local SOCKS server.
 
-- `--check-tokens`: Display current token tracking status
-- `--wrap`: Wrap SOL to WSOL
-- `--unwrap`: Unwrap WSOL to SOL
-- `--close`: Close all token accounts
+##### Further Information
 
-## Usage
+See `./icmptunnel -h` for a list of options.
 
-```bash
-# Build the project
-cargo build --release
+##### Bugs
 
-# Run the bot
-cargo run --release
-```
+Please report any bugs on the Github project page at:
 
-Once started, the bot will:
-
-1. Connect to the Yellowstone gRPC endpoint
-2. Monitor transactions from the specified wallet address(es)
-3. Automatically copy buy and sell transactions as they occur
-4. Send notifications via Telegram for detected transactions and executed trades
-
-## Recent Updates
-
-- Added PumpSwap notification mode (can monitor without executing trades)
-- Implemented concurrent transaction processing using tokio tasks
-- Enhanced error handling and reporting
-- Improved selling strategy implementation
-
-## Contact
-
-For questions or support, please contact the developer.
+https://github.com/jamesbarlow/icmptunnel/issues

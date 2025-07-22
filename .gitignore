@@ -1,37 +1,11 @@
-pumpfun-ideal-mev-bot.git
-.env
-target
-blacklist.txt
-yellowstone-grpc
-pumpfun
-pumpfun-sdk
-substreams-solana-idl-examples
-pumpswap-sdk
-pump-swap-sdk
-src_restore
-# Rust build artifacts
-/target
-**/*.rs.bk
-source
-Cargo.lock
-solana-rpc-client-2.1.14
-# IDE files
-.idea/
-.vscode/
-*.iml
-backend
-# Environment files
-.env
-.env.local
-.env.*.local
+# Vim swap files
+src/*.swp
 
-# Transaction records
-/record/
-/record/pumpfun/
-/record/pumpswap/
-/record/raydium/
+# Object files
+src/*.o
 
-# Logs
-*.log
+# Gzipped man pages
+man/*.gz
 
-# Generated wallets directory
+# Executables
+icmptunnel

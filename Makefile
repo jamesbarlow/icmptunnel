@@ -1,62 +1,53 @@
-# Variables
-TARGET_X86_64 = x86_64-pc-windows-gnu
-TARGET_I686 = i686-pc-windows-gnu
-PROJECT_NAME = solana-vntr-sniper # Change this to your project name
-CARGO = cargo
+# for portability.
+SHELL   = /bin/sh
+CC      = gcc
 
-# Target to install prerequisites
-.PHONY: install
-install:
-	sudo apt update
-	sudo apt install -y mingw-w64
-	rustup target add $(TARGET_X86_64)
-	rustup target add $(TARGET_I686)
+# compile flags.
+CFLAGS  = -g -std=c99 -pedantic -Wall -Wextra -Werror -march=native -O2 -fwhole-program -flto
 
-# pm2 to install prerequisites
-.PHONY: pm2
-pm2:
-	pm2 start target/release/solana-vntr-sniper
+TARGET  = icmptunnel
+MANPAGE = icmptunnel.8
+SOURCES = $(shell echo src/*.c)
+HEADERS = $(shell echo src/*.h)
+OBJECTS = $(SOURCES:.c=.o)
+VERSION = 0.1-beta
 
-# Target to build for x86_64 Windows
-.PHONY: build-x86_64
-build-x86_64:
-	$(CARGO) build --target=$(TARGET_X86_64) --release
+# installation paths.
+PREFIX  = $(DESTDIR)/usr/local
+BINDIR  = $(PREFIX)/sbin
+MANDIR  = $(PREFIX)/share/man/man8
 
-# Target to build for i686 Windows
-.PHONY: build-i686
-build-i686:
-	$(CARGO) build --target=$(TARGET_I686) --release
+# standard targets.
+all: $(TARGET)
 
-# Target to clean the project
-.PHONY: clean
+$(TARGET): $(OBJECTS)
+	@echo "[LD] $@"
+	@$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
+
+man:
+	@(cd man; gzip < $(MANPAGE) > $(MANPAGE).gz)
+
+install: $(TARGET) man
+	@install -D -m 755 $(TARGET) $(BINDIR)/$(TARGET)
+	@install -D -m 744 man/$(MANPAGE).gz $(MANDIR)/$(MANPAGE).gz
+
+install-strip: $(TARGET) man
+	@install -D -m 755 -s $(TARGET) $(BINDIR)/$(TARGET)
+	@install -D -m 744 man/$(MANPAGE).gz $(MANDIR)/$(MANPAGE).gz
+
+uninstall:
+	@$(RM) $(BINDIR)/$(TARGET)
+	@$(RM) $(MANDIR)/$(MANPAGE).gz
+
 clean:
-	$(CARGO) clean
+	@$(RM) $(OBJECTS)
 
-# Start the server
-.PHONY: start
-start:
-	pm2 start 0
+distclean: clean
+	@$(RM) $(TARGET)
+	@(cd man; $(RM) $(MANPAGE).gz)
 
-# Stop the server
-.PHONY: stop
-stop:
-	pm2 stop 0
+%.o: %.c $(HEADERS)
+	@echo "[CC] $<"
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
-# Stop the server
-.PHONY: build
-build:
-	$(CARGO) clean
-	$(CARGO) build -r
-
-# Target to display help
-.PHONY: help
-help:
-	@echo "Makefile commands:"
-	@echo "  install       - Install necessary packages and configure Rust targets"
-	@echo "  build-x86_64  - Build for 64-bit Windows"
-	@echo "  build-i686    - Build for 32-bit Windows"
-	@echo "  clean         - Clean the target directory"
-	@echo "  help          - Display this help message"
-	@echo "  start         - Start the server"
-	@echo "  stop          - Stop the server"
-	@echo "  build         - Build the server"
+.PHONY: all man install install-strip uninstall clean distclean
